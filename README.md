@@ -3,7 +3,7 @@
 Chromium extension that:
 - Keeps Facebook limited to `Marketplace` and `Messages`
 - Lets you save Marketplace listings
-- Shows saved listings in a dropdown panel in the extension popup
+- Shows saved listings in a dropdown panel in the extension popup (title, price, and link)
 - Automatically removes saved listings that are no longer available
 
 ## Installation
