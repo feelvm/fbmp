@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>FB Marketplace Saver</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="header">
+        <h1>Marketplace Saver</h1>
+        <p>Facebook is restricted to Marketplace + Messages. Double-tap a title to rename.</p>
+      </header>
+
+      <section class="controls">
+        <button id="save-current" type="button">Save Current Listing</button>
+        <button id="check-now" type="button" class="secondary">Refresh Availability</button>
+        <p id="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <details id="saved-panel" open>
+        <summary id="saved-summary">Saved Listings (0)</summary>
+        <ul id="listing-list" class="listing-list"></ul>
+        <p id="empty-state" class="empty">No saved listings yet.</p>
+      </details>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Facebook Marketplace + Messages Only",
+  "description": "Restricts facebook.com to Marketplace and Messages, with saved listing tracking.",
+  "version": "1.0.0",
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://www.facebook.com/*",
+    "https://m.facebook.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "32": "icons/icon32.png"
+  },
+  "action": {
+    "default_title": "FB Marketplace Saver",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+       "32": "icons/icon32.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/*",
+        "https://m.facebook.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+:root {
+  color-scheme: light;
+  --bg: #f8f9fa;
+  --ink: #14213d;
+  --muted: #4a5568;
+  --accent: #0f7b0f;
+  --accent-2: #ffffff;
+  --line: #d3d7de;
+  --danger: #8e1d1d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 360px;
+  font: 13px/1.4 "Segoe UI", Tahoma, sans-serif;
+  background: linear-gradient(135deg, #f6f7f8 0%, #ffffff 100%);
+  color: var(--ink);
+}
+
+.wrap {
+  padding: 12px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.controls {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-weight: 700;
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--accent-2);
+}
+
+button.secondary {
+  background: #1f3a6b;
+}
+
+button.remove {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--danger);
+  border-radius: 6px;
+  font-weight: 600;
+  padding: 4px 8px;
+}
+
+#status {
+  min-height: 18px;
+  margin: 0;
+  color: var(--muted);
+}
+
+details {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+summary {
+  cursor: pointer;
+  list-style: none;
+  font-weight: 700;
+  padding: 10px;
+  background: #eef2f7;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+.listing-list {
+  margin: 0;
+  padding: 10px;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.listing-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.listing-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.listing-title {
+  margin: 0;
+  font-weight: 700;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.title-edit {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 6px;
+  font: inherit;
+  color: var(--ink);
+}
+
+.listing-item a {
+  color: var(--ink);
+  text-decoration: underline;
+  font-size: 12px;
+  width: fit-content;
+}
+
+.listing-item a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.empty {
+  margin: 0;
+  padding: 10px;
+  color: var(--muted);
+}
