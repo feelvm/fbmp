@@ -45,8 +45,9 @@ const PRICE_WITH_CODE_SUFFIX_RE = new RegExp(
 );
 const PRICE_WITH_LOCAL_PREFIX_RE = /\b(?:K[cč]|Ft|kr|lei|ron|zl)\s?\d[\d\s.,]*(?:[.,]\d{1,2})?\b/iu;
 const PRICE_WITH_LOCAL_SUFFIX_RE = /\b\d[\d\s.,]*(?:[.,]\d{1,2})?\s?(?:K[cč]|Ft|kr|lei|ron|zl)\b/iu;
-const PRICE_WITH_GENERIC_CODE_PREFIX_RE = /\b[A-Z]{2,4}\s?\d{2,3}(?:[\s.,]\d{3})*(?:[.,]\d{1,2})?\b/;
-const PRICE_WITH_GENERIC_CODE_SUFFIX_RE = /\b\d{2,3}(?:[\s.,]\d{3})*(?:[.,]\d{1,2})?\s?[A-Z]{2,4}\b/;
+const PRICE_WITH_GENERIC_CODE_PREFIX_RE = /\b[A-Z]{3}\s+\d{1,3}(?:[\s.,]\d{3})*(?:[.,]\d{1,2})?\b/;
+const PRICE_WITH_GENERIC_CODE_SUFFIX_RE = /\b\d{1,3}(?:[\s.,]\d{3})*(?:[.,]\d{1,2})?\s+[A-Z]{3}\b/;
+const CURRENCY_CODE_TOKEN_RE = new RegExp(`\\b(?:${CURRENCY_CODES_RE_PART})\\b`, "i");
 
 init();
 
@@ -211,7 +212,7 @@ function sanitizeFallbackTitle(title) {
 }
 
 function sanitizeDisplayTitle(title) {
-  const cleaned = sanitizeUserTitle(title);
+  const cleaned = stripMarketplaceDecorators(sanitizeUserTitle(title));
   if (!cleaned) {
     return null;
   }
@@ -230,6 +231,22 @@ function sanitizeDisplayTitle(title) {
   return cleaned;
 }
 
+function stripMarketplaceDecorators(title) {
+  if (!title) {
+    return null;
+  }
+
+  const cleaned = String(title)
+    .replace(/^\s*(?:facebook\s+)?marketplace\s*[-|:]\s*/i, "")
+    .replace(/\s*[|]\s*facebook\s*$/i, "")
+    .replace(/\s*[-]\s*facebook\s*$/i, "")
+    .replace(/\s*[|]\s*marketplace\s*$/i, "")
+    .replace(/\s*[-]\s*marketplace\s*$/i, "")
+    .trim();
+
+  return cleaned || null;
+}
+
 function sanitizeUserPrice(price) {
   const cleaned = normalizeSearchText(price);
   return cleaned || null;
@@ -241,39 +258,22 @@ function extractPriceFromText(text) {
     return null;
   }
 
-  const symbol = normalized.match(PRICE_WITH_SYMBOL_RE);
-  if (symbol?.[0]) {
-    return standardizePriceString(symbol[0]);
+  const candidates = [];
+  collectPriceMatches(normalized, PRICE_WITH_SYMBOL_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_CODE_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_CODE_SUFFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_LOCAL_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_LOCAL_SUFFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_GENERIC_CODE_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_GENERIC_CODE_SUFFIX_RE, candidates);
+
+  let bestPrice = null;
+  for (const candidate of candidates) {
+    bestPrice = pickBetterPriceCandidate(bestPrice, candidate);
   }
 
-  const codedPrefix = normalized.match(PRICE_WITH_CODE_PREFIX_RE);
-  if (codedPrefix?.[0]) {
-    return standardizePriceString(codedPrefix[0]);
-  }
-
-  const codedSuffix = normalized.match(PRICE_WITH_CODE_SUFFIX_RE);
-  if (codedSuffix?.[0]) {
-    return standardizePriceString(codedSuffix[0]);
-  }
-
-  const localPrefix = normalized.match(PRICE_WITH_LOCAL_PREFIX_RE);
-  if (localPrefix?.[0]) {
-    return standardizePriceString(localPrefix[0]);
-  }
-
-  const localSuffix = normalized.match(PRICE_WITH_LOCAL_SUFFIX_RE);
-  if (localSuffix?.[0]) {
-    return standardizePriceString(localSuffix[0]);
-  }
-
-  const genericPrefix = normalized.match(PRICE_WITH_GENERIC_CODE_PREFIX_RE);
-  if (genericPrefix?.[0]) {
-    return standardizePriceString(genericPrefix[0]);
-  }
-
-  const genericSuffix = normalized.match(PRICE_WITH_GENERIC_CODE_SUFFIX_RE);
-  if (genericSuffix?.[0]) {
-    return standardizePriceString(genericSuffix[0]);
+  if (bestPrice) {
+    return bestPrice;
   }
 
   if (/\bfree\b/i.test(normalized)) {
@@ -283,9 +283,75 @@ function extractPriceFromText(text) {
   return null;
 }
 
+function collectPriceMatches(text, pattern, target) {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const matcher = new RegExp(pattern.source, flags);
+  let match = matcher.exec(text);
+
+  while (match) {
+    const standardized = standardizePriceString(match[0]);
+    if (standardized) {
+      target.push(standardized);
+    }
+
+    if (matcher.lastIndex === match.index) {
+      matcher.lastIndex += 1;
+    }
+    match = matcher.exec(text);
+  }
+}
+
+function pickBetterPriceCandidate(current, candidate) {
+  if (!candidate) {
+    return current || null;
+  }
+  if (!current) {
+    return candidate;
+  }
+
+  const currentScore = priceConfidenceScore(current);
+  const candidateScore = priceConfidenceScore(candidate);
+  if (candidateScore > currentScore) {
+    return candidate;
+  }
+  if (candidateScore < currentScore) {
+    return current;
+  }
+
+  return candidate.length > current.length ? candidate : current;
+}
+
+function priceConfidenceScore(price) {
+  if (!price) {
+    return -1;
+  }
+
+  const value = String(price);
+  const digits = (value.match(/\d/g) || []).length;
+  let score = digits;
+
+  if (/[.,]\d{2}\b/.test(value)) {
+    score += 3;
+  }
+  if (/[$€£]/.test(value)) {
+    score += 2;
+  } else if (CURRENCY_CODE_TOKEN_RE.test(value)) {
+    score += 2;
+  }
+  if (/^[$€£]\d{1,2}$/.test(value)) {
+    score -= 4;
+  }
+  if (/^(?:[A-Z]{3}\s\d{1,2}|\d{1,2}\s[A-Z]{3})$/.test(value)) {
+    score -= 3;
+  }
+
+  return score;
+}
+
 function standardizePriceString(value) {
   return normalizeSearchText(value)
     .replace(/\s+/g, " ")
+    .replace(/(\d)\s*([.,])\s*(\d)/g, "$1$2$3")
     .replace(/([A-Z]{2,4})(\d)/g, "$1 $2")
     .replace(/(\d)([A-Z]{2,4})/g, "$1 $2")
     .replace(/([$€£])\s+/g, "$1")

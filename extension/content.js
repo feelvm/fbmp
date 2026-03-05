@@ -57,8 +57,9 @@ const PRICE_WITH_CODE_SUFFIX_RE = new RegExp(
 );
 const PRICE_WITH_LOCAL_PREFIX_RE = /\b(?:K[cč]|Ft|kr|lei|ron|zl)\s?\d[\d\s.,]*(?:[.,]\d{1,2})?\b/iu;
 const PRICE_WITH_LOCAL_SUFFIX_RE = /\b\d[\d\s.,]*(?:[.,]\d{1,2})?\s?(?:K[cč]|Ft|kr|lei|ron|zl)\b/iu;
-const PRICE_WITH_GENERIC_CODE_PREFIX_RE = /\b[A-Z]{2,4}\s?\d{2,3}(?:[\s.,]\d{3})*(?:[.,]\d{1,2})?\b/;
-const PRICE_WITH_GENERIC_CODE_SUFFIX_RE = /\b\d{2,3}(?:[\s.,]\d{3})*(?:[.,]\d{1,2})?\s?[A-Z]{2,4}\b/;
+const PRICE_WITH_GENERIC_CODE_PREFIX_RE = /\b[A-Z]{3}\s+\d{1,3}(?:[\s.,]\d{3})*(?:[.,]\d{1,2})?\b/;
+const PRICE_WITH_GENERIC_CODE_SUFFIX_RE = /\b\d{1,3}(?:[\s.,]\d{3})*(?:[.,]\d{1,2})?\s+[A-Z]{3}\b/;
+const CURRENCY_CODE_TOKEN_RE = new RegExp(`\\b(?:${CURRENCY_CODES_RE_PART})\\b`, "i");
 const PRICE_ATTRIBUTE_NAMES = [
   "aria-label",
   "title",
@@ -360,35 +361,60 @@ function extractCurrentListingPrice() {
     return jsonLdPrice;
   }
 
+  let fallbackPrice = null;
+
   const titleAreaPrice = extractPriceNearTitleBlock();
   if (titleAreaPrice) {
-    return titleAreaPrice;
+    if (!isLowConfidencePrice(titleAreaPrice)) {
+      return titleAreaPrice;
+    }
+    fallbackPrice = pickBetterPriceCandidate(fallbackPrice, titleAreaPrice);
   }
 
   const spanPrice = extractPriceFromAllSpans(120000);
   if (spanPrice) {
-    return spanPrice;
+    if (!isLowConfidencePrice(spanPrice)) {
+      return spanPrice;
+    }
+    fallbackPrice = pickBetterPriceCandidate(fallbackPrice, spanPrice);
   }
 
   const ogDescription = document.querySelector("meta[property='og:description']")?.content || "";
   const ogPrice = extractPriceFromText(ogDescription);
   if (ogPrice) {
-    return ogPrice;
+    if (!isLowConfidencePrice(ogPrice)) {
+      return ogPrice;
+    }
+    fallbackPrice = pickBetterPriceCandidate(fallbackPrice, ogPrice);
   }
 
   const headingText = document.querySelector("h1")?.parentElement?.innerText || "";
   const headingPrice = extractPriceFromText(headingText);
   if (headingPrice) {
-    return headingPrice;
+    if (!isLowConfidencePrice(headingPrice)) {
+      return headingPrice;
+    }
+    fallbackPrice = pickBetterPriceCandidate(fallbackPrice, headingPrice);
   }
 
   const bodySnippet = (document.body?.innerText || "").slice(0, 25000);
   const bodyTextPrice = extractPriceFromText(bodySnippet);
   if (bodyTextPrice) {
-    return bodyTextPrice;
+    if (!isLowConfidencePrice(bodyTextPrice)) {
+      return bodyTextPrice;
+    }
+    fallbackPrice = pickBetterPriceCandidate(fallbackPrice, bodyTextPrice);
   }
 
-  return extractPriceFromPseudoContent(document.body, 50000);
+  const pseudoPrice = extractPriceFromPseudoContent(document.body, 50000);
+  if (pseudoPrice) {
+    if (!isLowConfidencePrice(pseudoPrice)) {
+      return pseudoPrice;
+    }
+    fallbackPrice = pickBetterPriceCandidate(fallbackPrice, pseudoPrice);
+  }
+
+  return fallbackPrice;
 }
 
 function extractPriceFromJsonLd() {
@@ -460,6 +486,7 @@ function extractPriceNearTitleBlock() {
     return null;
   }
 
+  let bestPrice = null;
   const seen = new Set();
   for (const heading of headings) {
     const candidates = buildHeadingCandidates(heading);
@@ -473,18 +500,24 @@ function extractPriceNearTitleBlock() {
       if (text) {
         const price = extractPriceFromText(text.slice(0, 2200));
         if (price) {
-          return price;
+          if (!isLowConfidencePrice(price)) {
+            return price;
+          }
+          bestPrice = pickBetterPriceCandidate(bestPrice, price);
         }
       }
 
       const pseudoPrice = extractPriceFromPseudoContent(node, 2400);
       if (pseudoPrice) {
-        return pseudoPrice;
+        if (!isLowConfidencePrice(pseudoPrice)) {
+          return pseudoPrice;
+        }
+        bestPrice = pickBetterPriceCandidate(bestPrice, pseudoPrice);
       }
     }
   }
 
-  return null;
+  return bestPrice;
 }
 
 function buildHeadingCandidates(heading) {
@@ -516,6 +549,7 @@ function buildHeadingCandidates(heading) {
 function extractPriceFromAllSpans(maxSpans = 30000) {
   const spans = document.getElementsByTagName("span");
   const limit = Math.min(spans.length, Math.max(1, Number(maxSpans) || 30000));
+  let bestPrice = null;
 
   for (let i = 0; i < limit; i += 1) {
     const span = spans[i];
@@ -525,32 +559,45 @@ function extractPriceFromAllSpans(maxSpans = 30000) {
 
     const textPrice = extractPriceFromElementText(span);
     if (textPrice) {
-      return textPrice;
+      if (!isLowConfidencePrice(textPrice)) {
+        return textPrice;
+      }
+      bestPrice = pickBetterPriceCandidate(bestPrice, textPrice);
     }
 
     const attributePrice = extractPriceFromAttributes(span);
     if (attributePrice) {
-      return attributePrice;
+      if (!isLowConfidencePrice(attributePrice)) {
+        return attributePrice;
+      }
+      bestPrice = pickBetterPriceCandidate(bestPrice, attributePrice);
     }
 
     const beforePrice = extractPriceFromText(readPseudoContent(span, "::before"));
     if (beforePrice) {
-      return beforePrice;
+      if (!isLowConfidencePrice(beforePrice)) {
+        return beforePrice;
+      }
+      bestPrice = pickBetterPriceCandidate(bestPrice, beforePrice);
     }
 
     const afterPrice = extractPriceFromText(readPseudoContent(span, "::after"));
     if (afterPrice) {
-      return afterPrice;
+      if (!isLowConfidencePrice(afterPrice)) {
+        return afterPrice;
+      }
+      bestPrice = pickBetterPriceCandidate(bestPrice, afterPrice);
     }
   }
 
-  return null;
+  return bestPrice;
 }
 
 function extractPriceFromPseudoContent(rootNode, maxScan = 260) {
   const MAX_SCAN = Math.max(1, Number(maxScan) || 260);
   const queue = [rootNode];
   let scanned = 0;
+  let bestPrice = null;
 
   while (queue.length && scanned < MAX_SCAN) {
     const node = queue.shift();
@@ -562,19 +609,28 @@ function extractPriceFromPseudoContent(rootNode, maxScan = 260) {
 
     const inlineTextPrice = extractPriceFromElementText(node);
     if (inlineTextPrice) {
-      return inlineTextPrice;
+      if (!isLowConfidencePrice(inlineTextPrice)) {
+        return inlineTextPrice;
+      }
+      bestPrice = pickBetterPriceCandidate(bestPrice, inlineTextPrice);
     }
 
     const attributePrice = extractPriceFromAttributes(node);
     if (attributePrice) {
-      return attributePrice;
+      if (!isLowConfidencePrice(attributePrice)) {
+        return attributePrice;
+      }
+      bestPrice = pickBetterPriceCandidate(bestPrice, attributePrice);
     }
 
     const beforeContent = readPseudoContent(node, "::before");
     if (beforeContent) {
       const beforePrice = extractPriceFromText(beforeContent);
       if (beforePrice) {
-        return beforePrice;
+        if (!isLowConfidencePrice(beforePrice)) {
+          return beforePrice;
+        }
+        bestPrice = pickBetterPriceCandidate(bestPrice, beforePrice);
       }
     }
 
@@ -582,7 +638,10 @@ function extractPriceFromPseudoContent(rootNode, maxScan = 260) {
     if (afterContent) {
       const afterPrice = extractPriceFromText(afterContent);
       if (afterPrice) {
-        return afterPrice;
+        if (!isLowConfidencePrice(afterPrice)) {
+          return afterPrice;
+        }
+        bestPrice = pickBetterPriceCandidate(bestPrice, afterPrice);
       }
     }
 
@@ -594,7 +653,7 @@ function extractPriceFromPseudoContent(rootNode, maxScan = 260) {
     }
   }
 
-  return null;
+  return bestPrice;
 }
 
 function extractPriceFromElementText(element) {
@@ -719,37 +778,7 @@ function normalizePriceCandidate(priceValue, currencyCode) {
     }
   }
 
-  const codedPrefix = raw.match(PRICE_WITH_CODE_PREFIX_RE);
-  if (codedPrefix?.[0]) {
-    return standardizePriceString(codedPrefix[0]);
-  }
-
-  const codedSuffix = raw.match(PRICE_WITH_CODE_SUFFIX_RE);
-  if (codedSuffix?.[0]) {
-    return standardizePriceString(codedSuffix[0]);
-  }
-
-  const localPrefix = raw.match(PRICE_WITH_LOCAL_PREFIX_RE);
-  if (localPrefix?.[0]) {
-    return standardizePriceString(localPrefix[0]);
-  }
-
-  const localSuffix = raw.match(PRICE_WITH_LOCAL_SUFFIX_RE);
-  if (localSuffix?.[0]) {
-    return standardizePriceString(localSuffix[0]);
-  }
-
-  const genericPrefix = raw.match(PRICE_WITH_GENERIC_CODE_PREFIX_RE);
-  if (genericPrefix?.[0]) {
-    return standardizePriceString(genericPrefix[0]);
-  }
-
-  const genericSuffix = raw.match(PRICE_WITH_GENERIC_CODE_SUFFIX_RE);
-  if (genericSuffix?.[0]) {
-    return standardizePriceString(genericSuffix[0]);
-  }
-
-  return null;
+  return extractPriceFromText(raw);
 }
 
 function extractPriceFromText(text) {
@@ -758,39 +787,22 @@ function extractPriceFromText(text) {
     return null;
   }
 
-  const direct = normalized.match(PRICE_WITH_SYMBOL_RE);
-  if (direct?.[0]) {
-    return standardizePriceString(direct[0]);
+  const candidates = [];
+  collectPriceMatches(normalized, PRICE_WITH_SYMBOL_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_CODE_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_CODE_SUFFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_LOCAL_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_LOCAL_SUFFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_GENERIC_CODE_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_GENERIC_CODE_SUFFIX_RE, candidates);
+
+  let bestPrice = null;
+  for (const candidate of candidates) {
+    bestPrice = pickBetterPriceCandidate(bestPrice, candidate);
   }
 
-  const codedPrefix = normalized.match(PRICE_WITH_CODE_PREFIX_RE);
-  if (codedPrefix?.[0]) {
-    return standardizePriceString(codedPrefix[0]);
-  }
-
-  const codedSuffix = normalized.match(PRICE_WITH_CODE_SUFFIX_RE);
-  if (codedSuffix?.[0]) {
-    return standardizePriceString(codedSuffix[0]);
-  }
-
-  const localPrefix = normalized.match(PRICE_WITH_LOCAL_PREFIX_RE);
-  if (localPrefix?.[0]) {
-    return standardizePriceString(localPrefix[0]);
-  }
-
-  const localSuffix = normalized.match(PRICE_WITH_LOCAL_SUFFIX_RE);
-  if (localSuffix?.[0]) {
-    return standardizePriceString(localSuffix[0]);
-  }
-
-  const genericPrefix = normalized.match(PRICE_WITH_GENERIC_CODE_PREFIX_RE);
-  if (genericPrefix?.[0]) {
-    return standardizePriceString(genericPrefix[0]);
-  }
-
-  const genericSuffix = normalized.match(PRICE_WITH_GENERIC_CODE_SUFFIX_RE);
-  if (genericSuffix?.[0]) {
-    return standardizePriceString(genericSuffix[0]);
+  if (bestPrice) {
+    return bestPrice;
   }
 
   if (/\bfree\b/i.test(normalized)) {
@@ -800,9 +812,79 @@ function extractPriceFromText(text) {
   return null;
 }
 
+function collectPriceMatches(text, pattern, target) {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const matcher = new RegExp(pattern.source, flags);
+  let match = matcher.exec(text);
+
+  while (match) {
+    const standardized = standardizePriceString(match[0]);
+    if (standardized) {
+      target.push(standardized);
+    }
+
+    if (matcher.lastIndex === match.index) {
+      matcher.lastIndex += 1;
+    }
+    match = matcher.exec(text);
+  }
+}
+
+function isLowConfidencePrice(price) {
+  return priceConfidenceScore(price) < 4;
+}
+
+function pickBetterPriceCandidate(current, candidate) {
+  if (!candidate) {
+    return current || null;
+  }
+  if (!current) {
+    return candidate;
+  }
+
+  const currentScore = priceConfidenceScore(current);
+  const candidateScore = priceConfidenceScore(candidate);
+  if (candidateScore > currentScore) {
+    return candidate;
+  }
+  if (candidateScore < currentScore) {
+    return current;
+  }
+
+  return candidate.length > current.length ? candidate : current;
+}
+
+function priceConfidenceScore(price) {
+  if (!price) {
+    return -1;
+  }
+
+  const value = String(price);
+  const digits = (value.match(/\d/g) || []).length;
+  let score = digits;
+
+  if (/[.,]\d{2}\b/.test(value)) {
+    score += 3;
+  }
+  if (/[$€£]/.test(value)) {
+    score += 2;
+  } else if (CURRENCY_CODE_TOKEN_RE.test(value)) {
+    score += 2;
+  }
+  if (/^[$€£]\d{1,2}$/.test(value)) {
+    score -= 4;
+  }
+  if (/^(?:[A-Z]{3}\s\d{1,2}|\d{1,2}\s[A-Z]{3})$/.test(value)) {
+    score -= 3;
+  }
+
+  return score;
+}
+
 function standardizePriceString(value) {
   return normalizeSearchText(value)
     .replace(/\s+/g, " ")
+    .replace(/(\d)\s*([.,])\s*(\d)/g, "$1$2$3")
     .replace(/([A-Z]{2,4})(\d)/g, "$1 $2")
     .replace(/(\d)([A-Z]{2,4})/g, "$1 $2")
     .replace(/([$€£])\s+/g, "$1")
@@ -817,6 +899,7 @@ function sanitizeListingTitle(value) {
   }
 
   const cleaned = normalized
+    .replace(/^\s*(?:facebook\s+)?marketplace\s*[-|:]\s*/i, "")
     .replace(/\s*[|]\s*facebook\s*$/i, "")
     .replace(/\s*[-]\s*facebook\s*$/i, "")
     .replace(/\s*[|]\s*marketplace\s*$/i, "")
