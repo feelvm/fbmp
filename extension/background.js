@@ -248,6 +248,7 @@ function sanitizeStoredListing(entry) {
     title: typeof entry.title === "string" ? entry.title : null,
     price: typeof entry.price === "string" ? entry.price : null,
     originalPrice: typeof entry.originalPrice === "string" ? entry.originalPrice : null,
+    location: typeof entry.location === "string" ? entry.location : null,
     url: String(entry.url),
     titleEdited: Boolean(entry.titleEdited),
     savedAt: typeof entry.savedAt === "string" ? entry.savedAt : new Date().toISOString(),
@@ -283,6 +284,7 @@ async function addListing(payload) {
   const providedTitle = sanitizeTitle(payload?.title);
   const providedPrice = sanitizePrice(payload?.price);
   const providedOriginalPrice = sanitizePrice(payload?.originalPrice);
+  const providedLocation = sanitizeLocation(payload?.location);
   const now = new Date().toISOString();
 
   const listings = await getListings();
@@ -309,6 +311,7 @@ async function addListing(payload) {
     title,
     price: resolvedPrice,
     originalPrice: resolvedOriginalPrice,
+    location: providedLocation || existing?.location || null,
     url: normalizedUrl,
     titleEdited: existing?.titleEdited || false,
     savedAt: existingIndex >= 0 ? listings[existingIndex].savedAt : now,
@@ -439,6 +442,14 @@ async function checkListingAvailability(url) {
   } catch (_error) {
     return true;
   }
+}
+
+function sanitizeLocation(input) {
+  const cleaned = normalizeSearchText(input);
+  if (!cleaned || cleaned.length > 120) {
+    return null;
+  }
+  return cleaned;
 }
 
 function sanitizeTitle(input) {

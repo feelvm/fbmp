@@ -161,6 +161,15 @@ async function renderListings() {
     }
     price.appendChild(document.createTextNode(currentPrice));
 
+    const itemLocation = String(item?.location || "").trim();
+    if (itemLocation) {
+      const locationLine = document.createElement("p");
+      locationLine.className = "listing-location";
+      locationLine.textContent = `\uD83D\uDCCD ${itemLocation}`;
+      locationLine.title = "Approximate listing location";
+      left.appendChild(locationLine);
+    }
+
     const link = document.createElement("a");
     link.className = "listing-link";
     link.href = item.url;

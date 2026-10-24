@@ -294,6 +294,7 @@ function extractCurrentListing() {
   const url = canonical.split("?")[0];
   const title = extractCurrentListingTitle();
   const { price, originalPrice } = extractCurrentListingPrices();
+  const locationText = extractCurrentListingLocation();
 
   const idMatch = url.match(/\/marketplace\/item\/(\d+)/i);
   return {
@@ -301,8 +302,60 @@ function extractCurrentListing() {
     url,
     title,
     price,
-    originalPrice
+    originalPrice,
+    location: locationText
   };
+}
+
+function extractCurrentListingLocation() {
+  // Map footer: "Praha, Hlavní město Praha · Location is approximate".
+  const spans = document.getElementsByTagName("span");
+  const limit = Math.min(spans.length, 30000);
+
+  for (let i = 0; i < limit; i += 1) {
+    const span = spans[i];
+    if (!(span instanceof Element)) {
+      continue;
+    }
+
+    const text = normalizeSearchText(span.textContent || "");
+    if (!text || text.length > 160) {
+      continue;
+    }
+
+    if (/^\s*[^·]{2,120}\s·\s/i.test(text) && /approximate/i.test(text)) {
+      const locationText = text.split("·")[0].trim();
+      if (locationText && !/approximate/i.test(locationText)) {
+        return locationText;
+      }
+    }
+  }
+
+  // Subtitle line: "Listed 7 weeks ago in Praha, Hlavní město Praha"
+  // (plus common non-English UI variants).
+  for (let i = 0; i < limit; i += 1) {
+    const span = spans[i];
+    if (!(span instanceof Element)) {
+      continue;
+    }
+
+    const text = normalizeSearchText(span.textContent || "");
+    if (!text || text.length > 160) {
+      continue;
+    }
+
+    const listedMatch =
+      text.match(/^(?:listed|uvedeno)\b.*?\b(?:in|v)\s+(.+)$/i) ||
+      text.match(/^(?:publikováno|zveřejněno)\b.*?\bv\s+(.+)$/i);
+    if (listedMatch?.[1]) {
+      const locationText = listedMatch[1].trim();
+      if (locationText && locationText.length <= 120) {
+        return locationText;
+      }
+    }
+  }
+
+  return null;
 }
 
 function extractCurrentListingTitle() {
@@ -333,7 +386,7 @@ async function extractCurrentListingWithRetries() {
     return null;
   }
 
-  if (listing.price && listing.originalPrice) {
+  if (listing.price && listing.originalPrice && listing.location) {
     return listing;
   }
 
@@ -348,10 +401,11 @@ async function extractCurrentListingWithRetries() {
       ...listing,
       ...next,
       price: listing.price || next.price || null,
-      originalPrice: listing.originalPrice || next.originalPrice || null
+      originalPrice: listing.originalPrice || next.originalPrice || null,
+      location: listing.location || next.location || null
     };
 
-    if (listing.price && (listing.originalPrice || attempt >= 4)) {
+    if (listing.price && (listing.originalPrice || listing.location || attempt >= 4)) {
       return listing;
     }
   }

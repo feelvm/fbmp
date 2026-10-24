@@ -137,6 +137,12 @@ summary::-webkit-details-marker {
   margin-right: 6px;
 }
 
+.listing-location {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .title-edit {
   width: 100%;
   border: 1px solid var(--line);

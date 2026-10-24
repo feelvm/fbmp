@@ -5,6 +5,7 @@ Chromium extension that:
 - Lets you save Marketplace listings
 - Shows saved listings in a dropdown panel in the extension popup (title, price, and link)
 - Detects discounted listings and stores both the original (before) and sale (after) price, shown with the original struck through
+- Saves the listing's approximate location (e.g. "Praha, Hlavní město Praha") and shows it in the popup
 - Automatically removes saved listings that are no longer available
 
 ## Installation
