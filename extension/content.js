@@ -1,6 +1,8 @@
 const ALLOWED_PREFIXES = ["/marketplace", "/messages"];
 const AUTH_PREFIXES = ["/login", "/checkpoint", "/two_factor", "/recover"];
 const SAVE_BUTTON_ID = "fbmp-save-listing-button";
+const HOST_BACKUP_STORAGE_KEY = "fbmp_savedListingsBackup";
+const HOST_BACKUP_VERSION = 1;
 const ROUTE_CHECK_INTERVAL_MS = 1000;
 const SAVE_BUTTON_BIND_VERSION = "3";
 const KNOWN_CURRENCY_CODES = [
@@ -94,6 +96,7 @@ function bootstrap() {
   enforceAllowedRoute();
   setupRouteObserver();
   installMessageHandlers();
+  syncHostBackup();
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", onReady, { once: true });
@@ -945,6 +948,11 @@ function normalizeSearchText(value) {
 
 function installMessageHandlers() {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.action === "LISTINGS_UPDATED" && Array.isArray(message.listings)) {
+      writeHostBackup(message.listings);
+      return;
+    }
+
     if (message?.action !== "GET_LISTING_INFO") {
       return;
     }
@@ -958,6 +966,60 @@ function installMessageHandlers() {
 
     return true;
   });
+}
+
+async function syncHostBackup() {
+  const backup = readHostBackup();
+
+  let response = null;
+  try {
+    response = await chrome.runtime.sendMessage({
+      action: "SYNC_WITH_HOST",
+      backup
+    });
+  } catch (_error) {
+    // Extension context unavailable; nothing to sync.
+    return;
+  }
+
+  if (response?.ok && Array.isArray(response.listings)) {
+    writeHostBackup(response.listings);
+  }
+}
+
+function readHostBackup() {
+  try {
+    const raw = window.localStorage.getItem(HOST_BACKUP_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (Array.isArray(parsed?.listings)) {
+      return parsed.listings;
+    }
+    return [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function writeHostBackup(listings) {
+  try {
+    window.localStorage.setItem(
+      HOST_BACKUP_STORAGE_KEY,
+      JSON.stringify({
+        version: HOST_BACKUP_VERSION,
+        savedAt: new Date().toISOString(),
+        listings
+      })
+    );
+  } catch (_error) {
+    // Storage unavailable (quota, privacy mode); mirror is best-effort.
+  }
 }
 
 function delay(ms) {

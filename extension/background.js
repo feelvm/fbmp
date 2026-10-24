@@ -1,6 +1,7 @@
 const STORAGE_KEY = "savedListings";
 const ALARM_NAME = "fbmp-availability-check";
 const CHECK_INTERVAL_MINUTES = 30;
+const FACEBOOK_TAB_URLS = ["https://www.facebook.com/*", "https://m.facebook.com/*"];
 
 const UNAVAILABLE_MARKERS = [
   "this listing isn't available anymore",
@@ -133,6 +134,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (action === "SYNC_WITH_HOST") {
+      const listings = await restoreFromHostBackup(message?.backup);
+      sendResponse({ ok: true, listings });
+      return;
+    }
+
     sendResponse({ ok: false, error: "Unknown action." });
   })().catch((error) => {
     sendResponse({ ok: false, error: error.message || String(error) });
@@ -154,9 +161,7 @@ async function ensureAlarm() {
 
 async function reloadFacebookTabs() {
   try {
-    const tabs = await chrome.tabs.query({
-      url: ["https://www.facebook.com/*", "https://m.facebook.com/*"]
-    });
+    const tabs = await chrome.tabs.query({ url: FACEBOOK_TAB_URLS });
 
     for (const tab of tabs) {
       if (!tab.id) {
@@ -181,6 +186,72 @@ async function getListings() {
 
 async function setListings(listings) {
   await chrome.storage.local.set({ [STORAGE_KEY]: listings });
+  await broadcastListings(listings);
+}
+
+async function broadcastListings(listings) {
+  try {
+    const tabs = await chrome.tabs.query({ url: FACEBOOK_TAB_URLS });
+
+    for (const tab of tabs) {
+      if (!tab.id) {
+        continue;
+      }
+      try {
+        await chrome.tabs.sendMessage(tab.id, {
+          action: "LISTINGS_UPDATED",
+          listings
+        });
+      } catch (_error) {
+        // Tab may not have the content script injected yet.
+      }
+    }
+  } catch (_error) {
+    // Ignore query failures.
+  }
+}
+
+async function restoreFromHostBackup(backup) {
+  const current = await getListings();
+  if (current.length || !Array.isArray(backup) || !backup.length) {
+    return current;
+  }
+
+  const restored = backup
+    .filter(isRestorableListing)
+    .map(sanitizeStoredListing);
+
+  if (restored.length) {
+    await setListings(restored);
+    return restored;
+  }
+
+  return current;
+}
+
+function isRestorableListing(entry) {
+  if (!entry || typeof entry !== "object") {
+    return false;
+  }
+
+  const id = typeof entry.id === "string" || typeof entry.id === "number" ? String(entry.id) : null;
+  if (!id) {
+    return false;
+  }
+
+  return typeof entry.url === "string" && /^https:\/\/(www|m)\.facebook\.com\//i.test(entry.url);
+}
+
+function sanitizeStoredListing(entry) {
+  return {
+    id: String(entry.id),
+    title: typeof entry.title === "string" ? entry.title : null,
+    price: typeof entry.price === "string" ? entry.price : null,
+    url: String(entry.url),
+    titleEdited: Boolean(entry.titleEdited),
+    savedAt: typeof entry.savedAt === "string" ? entry.savedAt : new Date().toISOString(),
+    lastCheckedAt: typeof entry.lastCheckedAt === "string" ? entry.lastCheckedAt : null
+  };
 }
 
 function normalizeListingUrl(url) {

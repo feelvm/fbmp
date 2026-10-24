@@ -43,6 +43,28 @@ This extension is loaded as an unpacked extension (Developer Mode).
 - Each saved listing URL is fetched.
 - If the listing page indicates unavailability (or returns `404/410`), it is removed from saved entries.
 
+## Data Persistence
+
+The saved listings list survives extension removal, reload, and reinstall:
+
+- Every change to the saved list is mirrored into `localStorage` of the
+  `facebook.com` origin (key `fbmp_savedListingsBackup`), written by the
+  content script. This storage belongs to Facebook, not to the extension, so
+  the browser keeps it even after the extension is removed.
+- Whenever a Facebook tab loads, the content script sends its mirrored copy
+  to the background worker (`SYNC_WITH_HOST`). If the extension's own
+  `chrome.storage.local` is empty — e.g. after a fresh install or reinstall —
+  the list is restored from the mirror.
+- If the extension's storage still has data, it is treated as authoritative
+  and the mirror is overwritten with it, so removing listings in the popup is
+  never undone by a stale mirror.
+- The mirror is written as `{ version, savedAt, listings }`; legacy plain
+  arrays are also accepted when restoring.
+
+Note: the restore happens the first time a Facebook tab is opened after
+reinstalling (the extension also reloads open Facebook tabs on install), so
+the popup will show the saved list again once that sync has run.
+
 ## Notes
 
 - Facebook is a dynamic SPA; route and UI structure can change.
