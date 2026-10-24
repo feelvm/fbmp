@@ -354,16 +354,151 @@ async function extractCurrentListingWithRetries() {
 }
 
 function extractCurrentListingPrices() {
+  // Discount-first: two distinct prices in the price area means a discount
+  // regardless of how the original price is rendered (strike, dimmed, aria).
+  const areaCandidates = collectPriceAreaCandidates();
+  const pair = chooseDiscountPair(areaCandidates);
+  if (pair) {
+    console.debug("[FBMP] discount pair from price area", areaCandidates, pair);
+    return pair;
+  }
+
   const price = extractCurrentListingPrice();
   const originalPrice = extractOriginalListingPrice(price);
 
   const priceValue = parsePriceValue(price);
   const originalValue = parsePriceValue(originalPrice);
   if (priceValue != null && originalValue != null && originalValue > priceValue) {
+    console.debug("[FBMP] discount pair from strike/label scan", {
+      price,
+      originalPrice
+    });
     return { price, originalPrice };
   }
 
+  console.debug("[FBMP] no discount pair", {
+    areaCandidates,
+    price,
+    originalPrice
+  });
   return { price, originalPrice: null };
+}
+
+function collectTightPriceAreaRoots() {
+  const roots = new Set();
+
+  for (const heading of document.querySelectorAll("h1")) {
+    if (heading.parentElement) {
+      roots.add(heading.parentElement);
+    }
+    if (heading.nextElementSibling) {
+      roots.add(heading.nextElementSibling);
+    }
+    if (heading.parentElement?.nextElementSibling) {
+      roots.add(heading.parentElement.nextElementSibling);
+    }
+  }
+
+  return Array.from(roots);
+}
+
+function collectPriceAreaCandidates() {
+  const byValue = new Map();
+
+  for (const root of collectTightPriceAreaRoots()) {
+    const queue = [root];
+    let scanned = 0;
+
+    while (queue.length && scanned < 2000) {
+      const node = queue.shift();
+      if (!(node instanceof Element)) {
+        continue;
+      }
+
+      scanned += 1;
+      const struck = isStrikeThroughElement(node);
+
+      if (!struck) {
+        const text = normalizeSearchText(node.textContent || "");
+        if (text && text.length <= 48) {
+          const price = extractPriceFromText(text);
+          if (price && !(hasMultiplePriceValues(text) && containsStrikeThrough(node))) {
+            addPriceAreaCandidate(byValue, price, struck);
+          }
+        }
+      }
+
+      for (const attributeName of ["aria-label", "title", "data-content", "data-text"]) {
+        const value = node.getAttribute(attributeName) || "";
+        if (value && value.length <= 80) {
+          const price = extractPriceFromText(value);
+          if (price) {
+            addPriceAreaCandidate(byValue, price, struck);
+          }
+        }
+      }
+
+      for (const child of node.children) {
+        queue.push(child);
+      }
+    }
+  }
+
+  return Array.from(byValue.values());
+}
+
+function addPriceAreaCandidate(byValue, priceText, struck) {
+  const value = parsePriceValue(priceText);
+  if (value == null || value <= 0) {
+    return;
+  }
+
+  const existing = byValue.get(value);
+  if (!existing) {
+    byValue.set(value, { text: priceText, value, struck });
+    return;
+  }
+
+  // Prefer the non-struck rendering of the same amount for the sale price.
+  if (existing.struck && !struck) {
+    byValue.set(value, { text: priceText, value, struck: false });
+  }
+}
+
+function chooseDiscountPair(candidates) {
+  const positive = candidates.filter((candidate) => candidate.value > 0);
+  if (!positive.length) {
+    return null;
+  }
+
+  const struck = positive.filter((candidate) => candidate.struck);
+  const normal = positive.filter((candidate) => !candidate.struck);
+
+  if (struck.length && normal.length) {
+    const original = struck.reduce((best, candidate) =>
+      candidate.value > best.value ? candidate : best
+    );
+    const saleCandidates = normal.filter((candidate) => candidate.value < original.value);
+    if (saleCandidates.length) {
+      // Highest non-struck price below the original: the sale price, not
+      // small noise like delivery fees.
+      const sale = saleCandidates.reduce((best, candidate) =>
+        candidate.value > best.value ? candidate : best
+      );
+      return { price: sale.text, originalPrice: original.text };
+    }
+  }
+
+  if (normal.length >= 2) {
+    const sorted = [...normal].sort((a, b) => a.value - b.value);
+    const sale = sorted[0];
+    const original = sorted[sorted.length - 1];
+    if (original.value > sale.value && original.value <= sale.value * 8) {
+      return { price: sale.text, originalPrice: original.text };
+    }
+  }
+
+  return null;
 }
 
 function extractOriginalListingPrice(currentPrice) {
@@ -405,7 +540,7 @@ function collectLabeledOriginalPrices() {
   for (const element of labeled) {
     for (const attributeName of ["aria-label", "title", "data-content", "data-text"]) {
       const value = element.getAttribute(attributeName) || "";
-      if (!value || value.length > 160 || !/original\s*price|price\s*before|was\s*:/i.test(value)) {
+      if (!value || value.length > 160 || !/\boriginal\b|\bwas\b|\bbefore\b|\bcrossed\b/i.test(value)) {
         continue;
       }
 
