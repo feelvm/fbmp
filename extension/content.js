@@ -98,6 +98,12 @@ function bootstrap() {
   installMessageHandlers();
   syncHostBackup();
 
+  try {
+    console.log("[FBMP] content script active on", location.pathname);
+  } catch (_error) {
+    // Ignore logging failures.
+  }
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", onReady, { once: true });
   } else {
@@ -359,7 +365,7 @@ function extractCurrentListingPrices() {
   const areaCandidates = collectPriceAreaCandidates();
   const pair = chooseDiscountPair(areaCandidates);
   if (pair) {
-    console.debug("[FBMP] discount pair from price area", areaCandidates, pair);
+    console.log("[FBMP] discount pair from price area", areaCandidates, pair);
     return pair;
   }
 
@@ -369,14 +375,14 @@ function extractCurrentListingPrices() {
   const priceValue = parsePriceValue(price);
   const originalValue = parsePriceValue(originalPrice);
   if (priceValue != null && originalValue != null && originalValue > priceValue) {
-    console.debug("[FBMP] discount pair from strike/label scan", {
+    console.log("[FBMP] discount pair from strike/label scan", {
       price,
       originalPrice
     });
     return { price, originalPrice };
   }
 
-  console.debug("[FBMP] no discount pair", {
+  console.log("[FBMP] no discount pair", {
     areaCandidates,
     price,
     originalPrice
