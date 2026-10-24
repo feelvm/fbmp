@@ -435,15 +435,10 @@ function collectStrikeThroughPrices() {
 
       scanned += 1;
 
-      let decoration = "";
-      try {
-        decoration = getComputedStyle(node).textDecorationLine || "";
-      } catch (_error) {
-        decoration = "";
-      }
-
-      if (decoration.includes("line-through")) {
-        const price = extractPriceFromElementText(node);
+      if (isStrikeThroughElement(node)) {
+        const price = extractPriceFromText(
+          normalizeSearchText(node.textContent || "").slice(0, 48)
+        );
         if (price) {
           candidates.push(price);
         }
@@ -654,7 +649,16 @@ function extractPriceNearTitleBlock() {
 
       const text = normalizeSearchText(node.innerText || node.textContent || "");
       if (text) {
-        const price = extractPriceFromText(text.slice(0, 2200));
+        let price = extractPriceFromText(text.slice(0, 2200));
+        if (price && containsStrikeThrough(node)) {
+          // Container shows both prices (e.g. "$89 $120" with the old one
+          // struck through); the regex would prefer the longer original,
+          // so re-extract from non-struck descendants instead.
+          const salePrice = extractSalePriceWithin(node);
+          if (salePrice) {
+            price = salePrice;
+          }
+        }
         if (price) {
           if (!isLowConfidencePrice(price)) {
             return price;
@@ -670,6 +674,88 @@ function extractPriceNearTitleBlock() {
         }
         bestPrice = pickBetterPriceCandidate(bestPrice, pseudoPrice);
       }
+    }
+  }
+
+  return bestPrice;
+}
+
+const strikeThroughCache = new WeakMap();
+
+function isStrikeThroughElement(element) {
+  if (strikeThroughCache.has(element)) {
+    return strikeThroughCache.get(element);
+  }
+
+  let struck = false;
+  try {
+    struck = (getComputedStyle(element).textDecorationLine || "").includes("line-through");
+  } catch (_error) {
+    struck = false;
+  }
+
+  strikeThroughCache.set(element, struck);
+  return struck;
+}
+
+function containsStrikeThrough(rootNode) {
+  const queue = [rootNode];
+  let scanned = 0;
+
+  while (queue.length && scanned < 400) {
+    const node = queue.shift();
+    if (!(node instanceof Element)) {
+      continue;
+    }
+
+    scanned += 1;
+    if (isStrikeThroughElement(node)) {
+      return true;
+    }
+
+    for (const child of node.children) {
+      queue.push(child);
+    }
+  }
+
+  return false;
+}
+
+function extractSalePriceWithin(rootNode) {
+  const queue = [rootNode];
+  let scanned = 0;
+  let bestPrice = null;
+
+  while (queue.length && scanned < 2000) {
+    const node = queue.shift();
+    if (!(node instanceof Element)) {
+      continue;
+    }
+
+    scanned += 1;
+
+    if (isStrikeThroughElement(node)) {
+      continue;
+    }
+
+    const textPrice = extractPriceFromElementText(node);
+    if (textPrice) {
+      if (!isLowConfidencePrice(textPrice)) {
+        return textPrice;
+      }
+      bestPrice = pickBetterPriceCandidate(bestPrice, textPrice);
+    }
+
+    const attributePrice = extractPriceFromAttributes(node);
+    if (attributePrice) {
+      if (!isLowConfidencePrice(attributePrice)) {
+        return attributePrice;
+      }
+      bestPrice = pickBetterPriceCandidate(bestPrice, attributePrice);
+    }
+
+    for (const child of node.children) {
+      queue.push(child);
     }
   }
 
@@ -818,15 +904,46 @@ function extractPriceFromElementText(element) {
     return null;
   }
 
+  if (isStrikeThroughElement(element)) {
+    return null;
+  }
+
   const text = normalizeSearchText(element.textContent || "");
   if (!text || text.length > 48) {
     return null;
   }
 
-  return extractPriceFromText(text);
+  const price = extractPriceFromText(text);
+  if (price && hasMultiplePriceValues(text) && containsStrikeThrough(element)) {
+    // Text mixes sale and struck-through original prices; unusable as-is.
+    return null;
+  }
+
+  return price;
+}
+
+function hasMultiplePriceValues(text) {
+  const candidates = [];
+  collectPriceMatches(text, PRICE_WITH_SYMBOL_RE, candidates);
+  collectPriceMatches(text, PRICE_WITH_CODE_PREFIX_RE, candidates);
+  collectPriceMatches(text, PRICE_WITH_CODE_SUFFIX_RE, candidates);
+
+  const values = new Set();
+  for (const candidate of candidates) {
+    const value = parsePriceValue(candidate);
+    if (value != null) {
+      values.add(value);
+    }
+  }
+
+  return values.size > 1;
 }
 
 function extractPriceFromAttributes(element) {
+  if (isStrikeThroughElement(element)) {
+    return null;
+  }
+
   for (const attrName of PRICE_ATTRIBUTE_NAMES) {
     const value = element.getAttribute(attrName);
     if (!value) {
