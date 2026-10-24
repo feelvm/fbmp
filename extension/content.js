@@ -424,21 +424,20 @@ function collectPriceAreaCandidates() {
       scanned += 1;
       const struck = isStrikeThroughElement(node);
 
-      if (!struck) {
-        const text = normalizeSearchText(node.textContent || "");
-        if (text && text.length <= 48) {
-          const price = extractPriceFromText(text);
-          if (price && !(hasMultiplePriceValues(text) && containsStrikeThrough(node))) {
-            addPriceAreaCandidate(byValue, price, struck);
-          }
+      const text = normalizeSearchText(node.textContent || "");
+      if (text && text.length <= 48) {
+        // Facebook nests the original price inside the sale price span with
+        // no separator (e.g. "CZK3,800CZK4,000"), so extract every price
+        // from the mixed text instead of skipping it.
+        for (const price of extractAllPricesFromText(text)) {
+          addPriceAreaCandidate(byValue, price, struck);
         }
       }
 
       for (const attributeName of ["aria-label", "title", "data-content", "data-text"]) {
         const value = node.getAttribute(attributeName) || "";
         if (value && value.length <= 80) {
-          const price = extractPriceFromText(value);
-          if (price) {
+          for (const price of extractAllPricesFromText(value)) {
             addPriceAreaCandidate(byValue, price, struck);
           }
         }
@@ -453,6 +452,22 @@ function collectPriceAreaCandidates() {
   return Array.from(byValue.values());
 }
 
+function extractAllPricesFromText(text) {
+  // "CZK3,800CZK4,000" breaks the price regexes (the \b between digits and
+  // the next currency code fails, yielding "CZK3,"); separating digits from
+  // a following uppercase letter restores clean matches.
+  const normalized = normalizeSearchText(text).replace(/(\d)(?=[A-Z])/g, "$1 ");
+
+  const candidates = [];
+  collectPriceMatches(normalized, PRICE_WITH_SYMBOL_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_CODE_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_CODE_SUFFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_LOCAL_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_LOCAL_SUFFIX_RE, candidates);
+
+  return Array.from(new Set(candidates));
+}
+
 function addPriceAreaCandidate(byValue, priceText, struck) {
   const value = parsePriceValue(priceText);
   if (value == null || value <= 0) {
@@ -461,13 +476,12 @@ function addPriceAreaCandidate(byValue, priceText, struck) {
 
   const existing = byValue.get(value);
   if (!existing) {
-    byValue.set(value, { text: priceText, value, struck });
+    byValue.set(value, { text: priceText, value, struck: Boolean(struck) });
     return;
   }
 
-  // Prefer the non-struck rendering of the same amount for the sale price.
-  if (existing.struck && !struck) {
-    byValue.set(value, { text: priceText, value, struck: false });
+  if (struck && !existing.struck) {
+    byValue.set(value, { ...existing, struck: true });
   }
 }
 
@@ -577,11 +591,11 @@ function collectStrikeThroughPrices() {
       scanned += 1;
 
       if (isStrikeThroughElement(node)) {
-        const price = extractPriceFromText(
-          normalizeSearchText(node.textContent || "").slice(0, 48)
-        );
-        if (price) {
-          candidates.push(price);
+        const struckText = normalizeSearchText(node.textContent || "");
+        if (struckText && struckText.length <= 48) {
+          for (const price of extractAllPricesFromText(struckText)) {
+            candidates.push(price);
+          }
         }
       }
 
