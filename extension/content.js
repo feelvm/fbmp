@@ -287,14 +287,15 @@ function extractCurrentListing() {
   const canonical = document.querySelector("link[rel='canonical']")?.href || location.href;
   const url = canonical.split("?")[0];
   const title = extractCurrentListingTitle();
-  const price = extractCurrentListingPrice();
+  const { price, originalPrice } = extractCurrentListingPrices();
 
   const idMatch = url.match(/\/marketplace\/item\/(\d+)/i);
   return {
     id: idMatch ? idMatch[1] : null,
     url,
     title,
-    price
+    price,
+    originalPrice
   };
 }
 
@@ -326,7 +327,7 @@ async function extractCurrentListingWithRetries() {
     return null;
   }
 
-  if (listing.price) {
+  if (listing.price && listing.originalPrice) {
     return listing;
   }
 
@@ -340,15 +341,167 @@ async function extractCurrentListingWithRetries() {
     listing = {
       ...listing,
       ...next,
-      price: listing.price || next.price || null
+      price: listing.price || next.price || null,
+      originalPrice: listing.originalPrice || next.originalPrice || null
     };
 
-    if (listing.price) {
+    if (listing.price && (listing.originalPrice || attempt >= 4)) {
       return listing;
     }
   }
 
   return listing;
+}
+
+function extractCurrentListingPrices() {
+  const price = extractCurrentListingPrice();
+  const originalPrice = extractOriginalListingPrice(price);
+
+  const priceValue = parsePriceValue(price);
+  const originalValue = parsePriceValue(originalPrice);
+  if (priceValue != null && originalValue != null && originalValue > priceValue) {
+    return { price, originalPrice };
+  }
+
+  return { price, originalPrice: null };
+}
+
+function extractOriginalListingPrice(currentPrice) {
+  const currentValue = parsePriceValue(currentPrice);
+  if (currentValue == null) {
+    return null;
+  }
+
+  let bestOriginal = null;
+  let bestValue = currentValue;
+
+  for (const candidate of collectLabeledOriginalPrices()) {
+    const value = parsePriceValue(candidate);
+    if (value != null && value > bestValue) {
+      bestOriginal = candidate;
+      bestValue = value;
+    }
+  }
+
+  if (bestOriginal) {
+    return bestOriginal;
+  }
+
+  for (const candidate of collectStrikeThroughPrices()) {
+    const value = parsePriceValue(candidate);
+    if (value != null && value > bestValue) {
+      bestOriginal = candidate;
+      bestValue = value;
+    }
+  }
+
+  return bestOriginal;
+}
+
+function collectLabeledOriginalPrices() {
+  const candidates = [];
+  const labeled = document.querySelectorAll("[aria-label], [title], [data-content], [data-text]");
+
+  for (const element of labeled) {
+    for (const attributeName of ["aria-label", "title", "data-content", "data-text"]) {
+      const value = element.getAttribute(attributeName) || "";
+      if (!value || value.length > 160 || !/original\s*price|price\s*before|was\s*:/i.test(value)) {
+        continue;
+      }
+
+      const price = extractPriceFromText(value);
+      if (price) {
+        candidates.push(price);
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function collectStrikeThroughPrices() {
+  const roots = collectDiscountScanRoots();
+  const candidates = [];
+
+  for (const root of roots) {
+    const queue = [root];
+    let scanned = 0;
+
+    while (queue.length && scanned < 4000) {
+      const node = queue.shift();
+      if (!(node instanceof Element)) {
+        continue;
+      }
+
+      scanned += 1;
+
+      let decoration = "";
+      try {
+        decoration = getComputedStyle(node).textDecorationLine || "";
+      } catch (_error) {
+        decoration = "";
+      }
+
+      if (decoration.includes("line-through")) {
+        const price = extractPriceFromElementText(node);
+        if (price) {
+          candidates.push(price);
+        }
+      }
+
+      for (const child of node.children) {
+        queue.push(child);
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function collectDiscountScanRoots() {
+  const roots = new Set();
+  const headings = document.querySelectorAll("h1");
+
+  for (const heading of headings) {
+    const container = heading.closest("div")?.parentElement || heading.parentElement;
+    if (container) {
+      roots.add(container);
+    }
+  }
+
+  if (!roots.size && document.body) {
+    roots.add(document.body);
+  }
+
+  return Array.from(roots);
+}
+
+function parsePriceValue(priceString) {
+  const raw = normalizeSearchText(priceString);
+  if (!raw) {
+    return null;
+  }
+
+  const match = raw.match(/\d[\d\s.,]*/);
+  if (!match) {
+    return null;
+  }
+
+  let digits = match[0].trim();
+  let decimal = "";
+  const tail = digits.match(/[.,](\d{1,2})$/);
+  if (tail) {
+    decimal = tail[1];
+    digits = digits.slice(0, digits.length - tail[0].length);
+  }
+
+  const whole = digits.replace(/[.,\s]/g, "");
+  if (!whole) {
+    return null;
+  }
+
+  const value = Number(`${whole}${decimal ? `.${decimal}` : ""}`);
+  return Number.isFinite(value) ? value : null;
 }
 
 function extractCurrentListingPrice() {

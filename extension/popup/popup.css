@@ -131,6 +131,12 @@ summary::-webkit-details-marker {
   font-size: 12px;
 }
 
+.listing-price .original-price {
+  text-decoration: line-through;
+  opacity: 0.6;
+  margin-right: 6px;
+}
+
 .title-edit {
   width: 100%;
   border: 1px solid var(--line);

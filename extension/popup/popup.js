@@ -150,7 +150,16 @@ async function renderListings() {
 
     const price = document.createElement("p");
     price.className = "listing-price";
-    price.textContent = displayPrice(item);
+    const originalPrice = sanitizeUserPrice(item?.originalPrice);
+    const currentPrice = displayPrice(item);
+    if (originalPrice && originalPrice !== currentPrice) {
+      const originalSpan = document.createElement("span");
+      originalSpan.className = "original-price";
+      originalSpan.textContent = originalPrice;
+      originalSpan.title = "Original price before discount";
+      price.appendChild(originalSpan);
+    }
+    price.appendChild(document.createTextNode(currentPrice));
 
     const link = document.createElement("a");
     link.className = "listing-link";

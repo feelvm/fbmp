@@ -4,6 +4,7 @@ Chromium extension that:
 - Keeps Facebook limited to `Marketplace` and `Messages`
 - Lets you save Marketplace listings
 - Shows saved listings in a dropdown panel in the extension popup (title, price, and link)
+- Detects discounted listings and stores both the original (before) and sale (after) price, shown with the original struck through
 - Automatically removes saved listings that are no longer available
 
 ## Installation
@@ -64,6 +65,16 @@ The saved listings list survives extension removal, reload, and reinstall:
 Note: the restore happens the first time a Facebook tab is opened after
 reinstalling (the extension also reloads open Facebook tabs on install), so
 the popup will show the saved list again once that sync has run.
+
+## Discounted Prices
+
+- On listings showing a discount, the original price is detected via
+  elements with a strikethrough style (or an explicit "original price"
+  label) and stored alongside the sale price as `originalPrice`.
+- The popup renders the original price struck through, followed by the
+  discounted price.
+- An original price is only kept when it parses to a value strictly higher
+  than the sale price, so plain listings never show a phantom "before" price.
 
 ## Notes
 

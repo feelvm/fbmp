@@ -247,6 +247,7 @@ function sanitizeStoredListing(entry) {
     id: String(entry.id),
     title: typeof entry.title === "string" ? entry.title : null,
     price: typeof entry.price === "string" ? entry.price : null,
+    originalPrice: typeof entry.originalPrice === "string" ? entry.originalPrice : null,
     url: String(entry.url),
     titleEdited: Boolean(entry.titleEdited),
     savedAt: typeof entry.savedAt === "string" ? entry.savedAt : new Date().toISOString(),
@@ -281,6 +282,7 @@ async function addListing(payload) {
   const listingId = payload?.id || extractListingId(normalizedUrl) || normalizedUrl;
   const providedTitle = sanitizeTitle(payload?.title);
   const providedPrice = sanitizePrice(payload?.price);
+  const providedOriginalPrice = sanitizePrice(payload?.originalPrice);
   const now = new Date().toISOString();
 
   const listings = await getListings();
@@ -289,12 +291,16 @@ async function addListing(payload) {
 
   const fetchedDetails =
     providedTitle && providedPrice
-      ? { title: null, price: null }
+      ? { title: null, price: null, originalPrice: null }
       : await fetchListingDetails(normalizedUrl);
   const fetchedTitle = fetchedDetails.title;
   const fetchedPrice = fetchedDetails.price;
   const resolvedTitle = providedTitle || fetchedTitle || `Marketplace Listing ${listingId}`;
   const resolvedPrice = providedPrice || fetchedPrice || existing?.price || null;
+  const resolvedOriginalPrice = pickNonDiscountedPrice(
+    providedOriginalPrice || fetchedDetails.originalPrice || existing?.originalPrice || null,
+    resolvedPrice
+  );
 
   const title = existing?.titleEdited ? existing.title : resolvedTitle;
 
@@ -302,6 +308,7 @@ async function addListing(payload) {
     id: listingId,
     title,
     price: resolvedPrice,
+    originalPrice: resolvedOriginalPrice,
     url: normalizedUrl,
     titleEdited: existing?.titleEdited || false,
     savedAt: existingIndex >= 0 ? listings[existingIndex].savedAt : now,
@@ -316,6 +323,23 @@ async function addListing(payload) {
 
   await setListings(listings);
   return nextEntry;
+}
+
+function pickNonDiscountedPrice(originalPrice, currentPrice) {
+  if (!originalPrice) {
+    return null;
+  }
+
+  const originalValue = parsePriceValue(originalPrice);
+  const currentValue = parsePriceValue(currentPrice);
+  if (originalValue == null) {
+    return null;
+  }
+  if (currentValue != null && originalValue <= currentValue) {
+    return null;
+  }
+
+  return originalPrice;
 }
 
 async function removeListing(id) {
@@ -372,14 +396,19 @@ async function checkAllListings() {
     }
 
     let nextPrice = listing.price || null;
-    if (!nextPrice) {
+    let nextOriginalPrice = listing.originalPrice || null;
+    if (!nextPrice || !nextOriginalPrice) {
       const details = await fetchListingDetails(listing.url);
-      nextPrice = details.price || null;
+      nextPrice = nextPrice || details.price || null;
+      nextOriginalPrice =
+        nextOriginalPrice ||
+        pickNonDiscountedPrice(details.originalPrice, nextPrice);
     }
 
     next.push({
       ...listing,
       price: nextPrice,
+      originalPrice: nextOriginalPrice,
       lastCheckedAt: now
     });
   }
@@ -456,7 +485,7 @@ async function fetchListingDetails(url) {
     });
 
     if (!response.ok) {
-      return { title: null, price: null };
+      return { title: null, price: null, originalPrice: null };
     }
 
     const html = await response.text();
@@ -476,14 +505,79 @@ async function fetchListingDetails(url) {
     const priceAmount = findMetaContent(html, "product:price:amount");
     const priceCurrency = findMetaContent(html, "product:price:currency");
     const metaPrice = normalizePriceCandidate(priceAmount, priceCurrency);
-    const ogDescriptionPrice = extractPriceFromText(findMetaContent(html, "og:description"));
+    const ogDescription = findMetaContent(html, "og:description");
+    const ogDescriptionPrice = extractPriceFromText(ogDescription);
     const titlePrice = extractPriceFromText(titleTag);
     const price = sanitizePrice(metaPrice || ogDescriptionPrice || titlePrice);
 
-    return { title, price };
+    const pairFromDescription = extractPricePairFromText(ogDescription);
+    const pairFromTitle = extractPricePairFromText(titleTag);
+    const originalPrice = pickNonDiscountedPrice(
+      pairFromDescription?.originalPrice || pairFromTitle?.originalPrice || null,
+      price
+    );
+
+    return { title, price, originalPrice };
   } catch (_error) {
-    return { title: null, price: null };
+    return { title: null, price: null, originalPrice: null };
   }
+}
+
+function extractPricePairFromText(text) {
+  const normalized = normalizeSearchText(text);
+  if (!normalized) {
+    return null;
+  }
+
+  const candidates = [];
+  collectPriceMatches(normalized, PRICE_WITH_SYMBOL_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_CODE_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_CODE_SUFFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_LOCAL_PREFIX_RE, candidates);
+  collectPriceMatches(normalized, PRICE_WITH_LOCAL_SUFFIX_RE, candidates);
+
+  const distinct = new Map();
+  for (const candidate of candidates) {
+    const value = parsePriceValue(candidate);
+    if (value != null && !distinct.has(value)) {
+      distinct.set(value, candidate);
+    }
+  }
+
+  if (distinct.size !== 2) {
+    return null;
+  }
+
+  const sorted = Array.from(distinct.entries()).sort((a, b) => a[0] - b[0]);
+  return { price: sorted[0][1], originalPrice: sorted[1][1] };
+}
+
+function parsePriceValue(priceString) {
+  const raw = normalizeSearchText(priceString);
+  if (!raw) {
+    return null;
+  }
+
+  const match = raw.match(/\d[\d\s.,]*/);
+  if (!match) {
+    return null;
+  }
+
+  let digits = match[0].trim();
+  let decimal = "";
+  const tail = digits.match(/[.,](\d{1,2})$/);
+  if (tail) {
+    decimal = tail[1];
+    digits = digits.slice(0, digits.length - tail[0].length);
+  }
+
+  const whole = digits.replace(/[.,\s]/g, "");
+  if (!whole) {
+    return null;
+  }
+
+  const value = Number(`${whole}${decimal ? `.${decimal}` : ""}`);
+  return Number.isFinite(value) ? value : null;
 }
 
 function findMetaContent(html, propertyName) {
